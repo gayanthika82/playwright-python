@@ -1,0 +1,28 @@
+# Ignore __pycache__ directories
+__pycache__/
+
+# Ignore test report
+reports/
+
+# Ignore failures file
+failures
+
+# Ignore screenshots folder
+screenshot/
+
+# Ignore pytest cache
+.pytest_cache/
+
+#Ignore venv 
+venv
+
+# Ignore logs
+test_execution.log
+test_execution.log
+
+# user-specific and machine-specific settings.
+.vs/
+.vscode/
+.assets/
+failures
+.env.test

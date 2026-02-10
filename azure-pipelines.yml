@@ -1,0 +1,131 @@
+name: $(Date:yyyyMMdd)$(Rev:.r)
+
+parameters:
+  - name: skipImageScan
+    displayName: 'Skip Image (Trivy) Scan'
+    type: boolean
+    default: true
+  - name: submodules
+    type: string
+    default: 'true'
+
+variables:
+  - group: ProjectSettings
+  - name: testFilePath_UI
+    value: './tests/ui/pipelineTest/'
+  - name: testFilePath_API
+    value: './tests/api/'
+
+resources:
+  repositories:
+    - repository: templates
+      type: git
+      name: EDH-CDE/infra-automation
+      ref: main
+
+trigger:
+  branches:
+    include:
+      - develop
+      - main
+      - newObjects
+  paths:
+    include:
+      - azure-build-agent/*
+      - deploy/your-azure-build-agent-pipeline.yaml
+
+pool:
+  name: EDH
+
+stages:
+  - template: Pipelines/ondemand/spinup-agent.yaml@templates
+    parameters:
+      initPoolName: $(InitPoolName)   # Comes from variable group 'ProjectSettings'
+
+  - stage: Build
+    displayName: Build and Test
+
+    pool:
+      name: $(PoolName)         # Comes from variable group 'ProjectSettings'
+      demands:
+        - Agent.Name -equals devops-agent-$(Build.BuildId) # Change this to your agent name in local-env.env file
+
+    jobs:
+      - job: RunUITests
+        timeoutInMinutes: 60
+        displayName: Run UI Tests
+        steps:
+        - checkout: self
+          displayName: Checkout code - Clean
+          clean: true
+          submodules: ${{ parameters.submodules }}
+
+        - script: |
+            echo "Current Python 3.13 version: $(python3.13 --version)"
+            pip3 list | grep -e "playwright" -e "crypto" -e "dotenv" -e "pytest" -e "requests"
+          displayName: 'Check Python packages'
+
+        - script: |
+            echo "Running UI tests..."
+            echo "Current working directory: $(System.DefaultWorkingDirectory)"
+            echo "Test file path: ${{ variables.testFilePath_UI }}"
+            mkdir -p reports
+            pytest -n auto --dist=loadfile --reruns 2 --reruns-delay 2 --browser-mode=headless ${{ variables.testFilePath_UI }} \
+            --html=reports/test-report-ui.html --self-contained-html \
+            --junitxml=reports/test-results-ui.xml
+          displayName: 'Run UI tests'
+          env:
+            DEBUG: 'pw:browser' # Enable Playwright browser debug logs
+
+        - task: PublishPipelineArtifact@1
+          condition: always() # Ensures this task runs even if previous tasks fail
+          inputs:
+            targetPath: '$(System.DefaultWorkingDirectory)/reports'
+            artifact: 'ui-test-reports'
+            publishLocation: 'pipeline'
+          displayName: 'Publish UI Test Artifacts'
+
+        - task: PublishTestResults@2
+          condition: always() # Ensures this task runs even if previous tasks fail
+          inputs:
+            testResultsFormat: 'JUnit'
+            testResultsFiles: 'reports/test-results-ui.xml'
+          displayName: 'Publish UI Test Results'
+
+      - job: RunAPITests
+        timeoutInMinutes: 60
+        displayName: Run API Tests
+        steps:
+        - checkout: self
+          displayName: Checkout code - Clean
+          clean: true
+          submodules: ${{ parameters.submodules }}
+
+        - script: |
+            echo "Running API tests..."
+            echo "Current working directory: $(System.DefaultWorkingDirectory)"
+            echo "Test file path: ${{ variables.testFilePath_API }}"
+            mkdir -p reports
+            pytest -v ${{ variables.testFilePath_API }} \
+            --html=reports/test-report-api.html --self-contained-html \
+            --junitxml=reports/test-results-api.xml --reruns 2 --reruns-delay 2
+          displayName: 'Run API tests'
+
+        - task: PublishPipelineArtifact@1
+          condition: always() # Ensures this task runs even if previous tasks fail
+          inputs:
+            targetPath: '$(System.DefaultWorkingDirectory)/reports'
+            artifact: 'api-test-reports'
+            publishLocation: 'pipeline'
+          displayName: 'Publish API Test Artifacts'
+
+        - task: PublishTestResults@2
+          condition: always() # Ensures this task runs even if previous tasks fail
+          inputs:
+            testResultsFormat: 'JUnit'
+            testResultsFiles: 'reports/test-results-api.xml'
+          displayName: 'Publish API Test Results'
+
+  - template: Pipelines/ondemand/spindown-agent.yaml@templates
+    parameters:
+      initPoolName: $(InitPoolName)     # Comes from variable group 'ProjectSettings'
